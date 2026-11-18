@@ -3,7 +3,7 @@
 <head><script>if(/(?:^|[?&])offer=1(?:&|$)/.test(location.search))document.documentElement.setAttribute('data-public-offer','');</script>
  <style>html[data-public-offer] body{visibility:hidden}</style>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.13"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
+<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.14"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
 <title>KOSMOS: технический райдер</title>
 <style>
 :root{--color-ivory:#e7d9ba;--color-bodyEdge:#514536;--color-pickguard:#27211d;--color-maple:#bf9c63;--color-fretboard:#48372b;--color-deviceMetal:#62666a;--color-screen:#182d34;--color-screenBlue:#598898;--color-screenGreen:#6c9b87;--color-screenCopper:#b48a57;--color-screenViolet:#777a9b;--color-rubber:#303638;--color-displayBlack:#1a181c;--color-ledRed:#b83539;--color-diGreen:#446d57;--wire-usb:#e6ac80;--wire-audio:#8ebfa5;--wire-video:#d2bd88;color-scheme:light;--paper:#f5f1e9;--paper2:#eee8de;--paper3:#e4dbcf;--ink:#282521;--ink2:#49433d;--muted:#695f55;--line:#d3c8b9;--accent:#9b4c2f;--accent-deep:#793820;--accentwash:#efdfd0;--onaccent:#fff9f0;--audio:#3f6f5c;--audio-wash:#e4ebe2;--stage:#ded8ce;--shadow:0 2px 4px rgba(40,37,33,.08);--clear:transparent;--font:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--mono:ui-monospace,'SFMono-Regular',Consolas,monospace;--gap:32px;--radius:8px;--ease:cubic-bezier(.16,1,.3,1);--usb-hex:#a45c38;--audio-hex:#3f6f5c;--stage-text:#40382f;--canvas-paper:#f3eadc;--frame:#d3c8b9;--video-hex:#886a38;--video-wash:#eee6d7;--print-line:#a69b8a;--print-paper:#f4efe7;--print-white:#ffffff;--color-floor:#494742;--color-edge:#282724;--color-metal:#c2c6c7;--color-dark:#3b3c3b;--color-black:#15191a;--color-skin:#e1ddce;--color-red:#704735;--color-gold:#b69a61;--color-green:#a17954;--color-white:#e8e2d3;--color-wood:#925c35;--color-blue:#566d79;--color-glass:#9ea8a2;--color-grid:#52504a;--color-shadow1:#393832;--color-shadow2:#30302c;overflow-x:hidden;overflow-x:clip}
@@ -941,39 +941,25 @@ function modelName(value,label){
 
 function offerText(proposal){
  const {rider,body}=proposal;
- const changes=[],missing=[],questions=[],equipment=[],mics=[],stands=[];
+ const equipment=[],mics=[],stands=[];
  let standIndex;
  for(const item of rider.items){
   const answer=body.answers[item.id]||{};
   // Older proposals have the original rider text but no saved form default.
   const label=item.offer?.label||(answer.model||item.title).split(' · ')[0];
   const original=modelName(item.title,label);
-  const before=item.offer?.original||original;
   const selected=answer.model?modelName(answer.model,label):original;
   const quantity=answer.quantity??item.quantity;
   const standType=item.offer?.standType;
   const rows=item.group==='INPUT'?mics:equipment;
   let description;
   if(answer.status==='unavailable'){
-   const unavailableLabel=item.offer?.unavailableLabel;
-   if(unavailableLabel){
-    changes.push([label,before+' → '+unavailableLabel].join(column));
-    description=unavailableLabel;
-   }else{
-    missing.push(label);
-    description=standType?standType+' '+amount(0):'Нет в наличии';
-   }
+   description=item.offer?.unavailableLabel||(standType?standType+' '+amount(0):'Нет в наличии');
   }else if(!answer.status||answer.status==='clarify'){
-   questions.push([label,answer.explanation||'без ответа'].join(column));
-   description=standType?standType+' · уточняется':'Уточняется';
+   description=answer.explanation||'Уточняется';
+   if(standType)description=standType+' · '+description;
   }else{
    description=item.offer?.freeText?selected:(standType||selected)+' '+amount(quantity);
-   if(answer.status==='replace'){
-    const amounts=quantity!==item.quantity;
-    const from=standType?amount(item.quantity):before+(amounts?' '+amount(item.quantity):'');
-    const to=standType?amount(quantity):selected+(amounts?' '+amount(quantity):'');
-    changes.push([label,from+' → '+to].join(column));
-   }
   }
   if(standType){
    if(standIndex===undefined)standIndex=equipment.length;
@@ -985,9 +971,6 @@ function offerText(proposal){
  if(stands.length)equipment.splice(standIndex,0,['Стойки',...stands].join(column));
  const event=rider.event;
  const sections=[[event.title+' · OFFER',event.date.split('-').reverse().join('.')+' · '+event.venue]];
- if(changes.length)sections.push(['ЗАМЕНЫ',...changes]);
- if(missing.length)sections.push(['НЕТ В НАЛИЧИИ',...missing]);
- if(questions.length)sections.push(['ТРЕБУЕТ УТОЧНЕНИЯ',...questions]);
  if(equipment.length)sections.push([divider,...equipment]);
  if(mics.length)sections.push([divider,...mics]);
  return sections.map(lines=>lines.join('\n')).join('\n\n');
@@ -999,7 +982,7 @@ function messageParts(text,chatURL){
  const maxDraftLength=4000;
  // The t.me endpoint also rejects long percent-encoded URLs, especially with Cyrillic.
  const fits=value=>value.length<=maxDraftLength&&(!chatURL||
-  chatURL.length+1+new URLSearchParams({text:value}).toString().length<=4000);
+  telegramDraftURL(chatURL,value).length<=4000);
  while(!fits(rest)){
   let low=0,high=Math.min(rest.length,maxDraftLength);
   while(low<high){
@@ -1026,7 +1009,8 @@ function telegramDraftURL(chatURL,text){
  if(!chatURL)return null;
  const url=new URL(chatURL);
  url.searchParams.set('text',text);
- return url.href;
+ // Telegram clients may treat raw plus signs as literal text. Genuine '+' is already %2B.
+ return url.href.replace(/\+/g,'%20');
 }
 
 function offerTelegramMessage(proposal,chatURL){
@@ -1159,38 +1143,39 @@ function telegramPanel(message,collapsed,copyText){
  if(message.chatURL)box.append(el('p',{class:'status'},'Для ручной вставки скопируйте текст и откройте ',el('a',{href:message.chatURL,rel:'noreferrer',text:'личный чат Андрея'}),'.'));
  return box;
 }
-function showResult(root,message,copyText,newOffer){
- root.classList.add('offer-page');
- root.replaceChildren(el('section',{class:'offer-result'},
-  el('h2',{text:'Предложение готово'}),
-  el('p',{class:'status',text:'Проверьте текст в личном чате Андрея и нажмите «Отправить».'}),
-  telegramPanel(message,true,copyText),
-  button('Новое предложение',newOffer)
- ));
- root.scrollIntoView({block:'start'});
-}
-
-function openTelegram(message,status,showResult,recoveryLabel){
- var firstPart=message.parts[0];
- if(!firstPart||!firstPart.telegramURL){
-  showResult();
-  return;
+function bindDelivery(message,submit,status){
+ var index=Number(history.state&&history.state.offerPart)||0;
+ if(index<0||index>=message.parts.length)index=0;
+ function update(){
+  status.textContent=message.parts.length>1?'К отправке часть '+(index+1)+' из '+message.parts.length+'.':'';
  }
- status.textContent='Открываем Telegram…';
- status.after(actions(
-  el('a',{class:'button green',href:firstPart.telegramURL,rel:'noreferrer',text:'Открыть Telegram'}),
-  button(message.parts.length>1?'Части предложения':recoveryLabel,showResult,'quiet')
- ));
- location.assign(firstPart.telegramURL);
+ function send(){
+  var part=message.parts[index];
+  if(!part.telegramURL){status.textContent='Ссылка Telegram недоступна.';return;}
+  index=(index+1)%message.parts.length;
+  try{history.replaceState(Object.assign({},history.state,{offerPart:index}),'');}catch(error){}
+  update();
+  location.assign(part.telegramURL.replace(/\+/g,'%20'));
+ }
+ submit.disabled=false;
+ submit.onclick=function(event){event.preventDefault();send();};
+ update();
+ return send;
 }
-return {createForm,telegramPanel,showResult,openTelegram};
+function showResult(root,message){
+ var submit=el('button',{type:'button',class:'primary',text:'Отправить'});
+ var status=el('p',{class:'status',role:'status'});
+ root.classList.add('offer-page');
+ root.replaceChildren(el('section',{class:'offer-result'},el('h2',{text:'Предложение готово'}),status,actions(submit)));
+ bindDelivery(message,submit,status);
+}
+return {createForm,telegramPanel,showResult,bindDelivery};
 })();
 
   'use strict';
 
 function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,chatURL){
- const {createForm,showResult,openTelegram}=window.KosmosOffer;
- const copyText=(text,field)=>window.KosmosUI.copyText(root,text,field);
+ const {createForm,showResult,bindDelivery}=window.KosmosOffer;
  let dirty=false;
  window.addEventListener('beforeunload',event=>{
   if(dirty){event.preventDefault();event.returnValue='';}
@@ -1201,15 +1186,11 @@ function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,chatURL
   return offerTelegramMessage({rider:{event,items:catalog.items},body},chatURL);
  }
 
- function showDraft(message){
-  showResult(root,message,copyText,()=>{
-   history.replaceState(null,'');
-   renderForm();
-  });
- }
-
  function renderForm(){
-  const {form,values,submit,status}=createForm(catalog,()=>{dirty=true;});
+  const {form,values,submit,status}=createForm(catalog,()=>{
+   dirty=true;
+   if(submit.onclick){submit.onclick=null;status.textContent='';history.replaceState(null,'');}
+  });
   root.classList.add('offer-page');
   root.replaceChildren(form);
   form.addEventListener('submit',event=>{
@@ -1228,12 +1209,12 @@ function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,chatURL
    dirty=false;
    // Keep the parts available when the sender returns to this browser tab.
    try{history.replaceState({kosmosOffer:message},'');}catch(error){/* The current page still has the prepared message. */}
-   openTelegram(message,status,()=>showDraft(message),'Текст предложения');
+   bindDelivery(message,submit,status)();
   });
  }
 
  const message=history.state&&history.state.kosmosOffer;
- if(message)showDraft(message);
+ if(message&&history.state.offerPart)showResult(root,message);
  else renderForm();
 }
 
