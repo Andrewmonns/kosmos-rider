@@ -3,7 +3,7 @@
 <head><script>if(/(?:^|[?&])offer=1(?:&|$)/.test(location.search))document.documentElement.setAttribute('data-public-offer','');</script>
  <style>html[data-public-offer] body{visibility:hidden}</style>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.14"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
+<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.15"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
 <title>KOSMOS: технический райдер</title>
 <style>
 :root{--color-ivory:#e7d9ba;--color-bodyEdge:#514536;--color-pickguard:#27211d;--color-maple:#bf9c63;--color-fretboard:#48372b;--color-deviceMetal:#62666a;--color-screen:#182d34;--color-screenBlue:#598898;--color-screenGreen:#6c9b87;--color-screenCopper:#b48a57;--color-screenViolet:#777a9b;--color-rubber:#303638;--color-displayBlack:#1a181c;--color-ledRed:#b83539;--color-diGreen:#446d57;--wire-usb:#e6ac80;--wire-audio:#8ebfa5;--wire-video:#d2bd88;color-scheme:light;--paper:#f5f1e9;--paper2:#eee8de;--paper3:#e4dbcf;--ink:#282521;--ink2:#49433d;--muted:#695f55;--line:#d3c8b9;--accent:#9b4c2f;--accent-deep:#793820;--accentwash:#efdfd0;--onaccent:#fff9f0;--audio:#3f6f5c;--audio-wash:#e4ebe2;--stage:#ded8ce;--shadow:0 2px 4px rgba(40,37,33,.08);--clear:transparent;--font:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--mono:ui-monospace,'SFMono-Regular',Consolas,monospace;--gap:32px;--radius:8px;--ease:cubic-bezier(.16,1,.3,1);--usb-hex:#a45c38;--audio-hex:#3f6f5c;--stage-text:#40382f;--canvas-paper:#f3eadc;--frame:#d3c8b9;--video-hex:#886a38;--video-wash:#eee6d7;--print-line:#a69b8a;--print-paper:#f4efe7;--print-white:#ffffff;--color-floor:#494742;--color-edge:#282724;--color-metal:#c2c6c7;--color-dark:#3b3c3b;--color-black:#15191a;--color-skin:#e1ddce;--color-red:#704735;--color-gold:#b69a61;--color-green:#a17954;--color-white:#e8e2d3;--color-wood:#925c35;--color-blue:#566d79;--color-glass:#9ea8a2;--color-grid:#52504a;--color-shadow1:#393832;--color-shadow2:#30302c;overflow-x:hidden;overflow-x:clip}
@@ -976,35 +976,6 @@ function offerText(proposal){
  return sections.map(lines=>lines.join('\n')).join('\n\n');
 }
 
-function messageParts(text,chatURL){
- const parts=[];
- let rest=text;
- const maxDraftLength=4000;
- // The t.me endpoint also rejects long percent-encoded URLs, especially with Cyrillic.
- const fits=value=>value.length<=maxDraftLength&&(!chatURL||
-  telegramDraftURL(chatURL,value).length<=4000);
- while(!fits(rest)){
-  let low=0,high=Math.min(rest.length,maxDraftLength);
-  while(low<high){
-   const mid=Math.ceil((low+high)/2);
-   if(fits(rest.slice(0,mid)))low=mid;
-   else high=mid-1;
-  }
-  const lineBreak=rest.lastIndexOf('\n',low);
-  if(lineBreak>0){
-   parts.push(rest.slice(0,lineBreak));
-   rest=rest.slice(lineBreak+1);
-   continue;
-  }
-  // Keep a surrogate pair together when an individual row has to span two drafts.
-  const cut=/[\uD800-\uDBFF]/.test(rest[low-1])?low-1:low;
-  parts.push(rest.slice(0,cut));
-  rest=rest.slice(cut);
- }
- if(rest)parts.push(rest);
- return parts;
-}
-
 function telegramDraftURL(chatURL,text){
  if(!chatURL)return null;
  const url=new URL(chatURL);
@@ -1013,13 +984,23 @@ function telegramDraftURL(chatURL,text){
  return url.href.replace(/\+/g,'%20');
 }
 
-function offerTelegramMessage(proposal,chatURL){
- const text=offerText(proposal);
- const parts=messageParts(text,chatURL).map(part=>({text:part,telegramURL:telegramDraftURL(chatURL,part)}));
- return {text,parts,telegramURL:parts.length===1?parts[0].telegramURL:null,chatURL};
+function singleOfferMessage(text,chatURL){
+ const attachment=Array.from(text).length>4096;
+ let telegramURL=attachment?null:telegramDraftURL(chatURL,text);
+ if(telegramURL&&telegramURL.length>4000){
+  // Open the client directly when the encoded Cyrillic text is too long for t.me.
+  const link=new URL(telegramURL);
+  const username=link.pathname.slice(1);
+  telegramURL='tg://resolve?domain='+encodeURIComponent(username)+'&'+link.search.slice(1);
+ }
+ return {text,attachment,telegramURL,chatURL,parts:[{text,telegramURL}]};
 }
 
-module.exports={offerTelegramMessage,telegramDraftURL};
+function offerTelegramMessage(proposal,chatURL){
+ return singleOfferMessage(offerText(proposal),chatURL);
+}
+
+module.exports={offerTelegramMessage,telegramDraftURL,singleOfferMessage};
 
 }};
   const cache=Object.create(null);
@@ -1124,42 +1105,34 @@ function createForm(template,onEdit){
 }
 
 function telegramPanel(message,collapsed,copyText){
- var box=el('div',{class:'offer-message'}),multiple=message.parts.length>1;
- if(multiple)box.append(el('p',{class:'status',text:'Отправьте части по порядку в личный чат Андрея.'}));
- message.parts.forEach(function(part,index){
-  var label=multiple?'Часть '+(index+1)+' из '+message.parts.length:'Сообщение Андрею';
-  if(multiple)box.append(el('h3',{text:label}));
-  var text=el('textarea',{readonly:'',value:part.text,rows:10,'aria-label':label,class:'message'});
-  var preview=collapsed?el('details',{},el('summary',{text:'Текст для копирования'}),text):text;
-  var controls=actions();
-  if(part.telegramURL)controls.append(el('a',{class:'button green',href:part.telegramURL,rel:'noreferrer',text:'Открыть Telegram'}));
-  controls.append(button('Скопировать',function(){
-   if(collapsed)preview.open=true;
-   copyText(part.text,text);
-  }));
-  if(collapsed)box.append(controls,preview);
-  else box.append(preview,controls);
- });
- if(message.chatURL)box.append(el('p',{class:'status'},'Для ручной вставки скопируйте текст и откройте ',el('a',{href:message.chatURL,rel:'noreferrer',text:'личный чат Андрея'}),'.'));
+ var box=el('div',{class:'offer-message'});
+ var submit=button('Отправить',function(){},'primary');
+ var status=el('p',{class:'status',role:'status'});
+ var text=el('textarea',{readonly:'',value:message.text,rows:10,'aria-label':'Сообщение Андрею',class:'message'});
+ box.append(text,actions(submit,button('Скопировать',function(){copyText(message.text,text);})),status);
+ bindDelivery(message,submit,status);
  return box;
 }
+const fileInstructions='Длинный OFFER сохранится в файл KOSMOS-OFFER.txt. Прикрепите его скрепкой в открывшемся чате Андрея.';
 function bindDelivery(message,submit,status){
- var index=Number(history.state&&history.state.offerPart)||0;
- if(index<0||index>=message.parts.length)index=0;
- function update(){
-  status.textContent=message.parts.length>1?'К отправке часть '+(index+1)+' из '+message.parts.length+'.':'';
- }
  function send(){
-  var part=message.parts[index];
-  if(!part.telegramURL){status.textContent='Ссылка Telegram недоступна.';return;}
-  index=(index+1)%message.parts.length;
-  try{history.replaceState(Object.assign({},history.state,{offerPart:index}),'');}catch(error){}
-  update();
-  location.assign(part.telegramURL.replace(/\+/g,'%20'));
+  if(!message.chatURL){status.textContent='Ссылка Telegram недоступна.';return;}
+  if(message.attachment){
+   const file=new Blob([message.text],{type:'text/plain;charset=utf-8'});
+   const url=URL.createObjectURL(file);
+   const link=el('a',{href:url,download:'KOSMOS-OFFER.txt'});
+   document.body.append(link);
+   link.click();
+   link.remove();
+   setTimeout(()=>URL.revokeObjectURL(url),60000);
+   location.assign(message.chatURL);
+  }else{
+   location.assign(message.telegramURL);
+  }
  }
  submit.disabled=false;
  submit.onclick=function(event){event.preventDefault();send();};
- update();
+ status.textContent=message.attachment?fileInstructions:'';
  return send;
 }
 function showResult(root,message){
@@ -1169,12 +1142,12 @@ function showResult(root,message){
  root.replaceChildren(el('section',{class:'offer-result'},el('h2',{text:'Предложение готово'}),status,actions(submit)));
  bindDelivery(message,submit,status);
 }
-return {createForm,telegramPanel,showResult,bindDelivery};
+return {fileInstructions,createForm,telegramPanel,showResult,bindDelivery};
 })();
 
   'use strict';
 
-function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,chatURL){
+function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,singleOfferMessage,chatURL){
  const {createForm,showResult,bindDelivery}=window.KosmosOffer;
  let dirty=false;
  window.addEventListener('beforeunload',event=>{
@@ -1189,7 +1162,9 @@ function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,chatURL
  function renderForm(){
   const {form,values,submit,status}=createForm(catalog,()=>{
    dirty=true;
-   if(submit.onclick){submit.onclick=null;status.textContent='';history.replaceState(null,'');}
+   if(submit.onclick){submit.onclick=null;history.replaceState(null,'');}
+   try{status.textContent=messageFor(values).attachment?window.KosmosOffer.fileInstructions:'';}
+   catch(error){status.textContent='';}
   });
   root.classList.add('offer-page');
   root.replaceChildren(form);
@@ -1207,14 +1182,14 @@ function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,chatURL
    }
    submit.disabled=true;
    dirty=false;
-   // Keep the parts available when the sender returns to this browser tab.
+   // Retain the complete offer if the browser restores this page.
    try{history.replaceState({kosmosOffer:message},'');}catch(error){/* The current page still has the prepared message. */}
    bindDelivery(message,submit,status)();
   });
  }
 
  const message=history.state&&history.state.kosmosOffer;
- if(message&&history.state.offerPart)showResult(root,message);
+ if(message&&history.state.offerPart)showResult(root,singleOfferMessage(message.text,chatURL));
  else renderForm();
 }
 
@@ -1227,7 +1202,7 @@ function startPublicOffer(root,catalog,prepareOffer,offerTelegramMessage,chatURL
   document.body.replaceChildren(root);
   document.title='KOSMOS · OFFER';
   startPublicOffer(root,{"fields":[{"id":"check-1","label":"Stage Box","original":"DL32","requirement":"StageBox Midas DL32/251","choices":["DL251","DL32","S16","S32","X32Rack","FullX32","CompactX32","ProducerX32"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"компл.","quantityEditable":true,"group":"Оборудование"},{"id":"pa","label":"PA","original":"","requirement":"PA. Подбор системы под вместимость и акустику площадки.","choices":[],"allowRider":false,"allowCustom":false,"allowUnavailable":false,"freeText":"Марка, модель и кол-во.","quantity":1,"unit":"система","quantityEditable":false,"group":"Оборудование"},{"id":"check-2","label":"Барабанная установка","original":"Tama Starclassic","requirement":"Барабанная установка: Yamaha Stage Custom / Tama Starclassic, 3 тома — 10″ / 12″ / 16″, малый барабан 14″, винтовой стул.","choices":["Yamaha Stage Custom","Tama Starclassic"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"drumSizes":[{"id":"kick","label":"Бочка","original":"22″","choices":["18″","20″","22″"]},{"id":"tom1","label":"Том 1","original":"10″","choices":["8″","10″","12″"]},{"id":"tom2","label":"Том 2","original":"12″","choices":["8″","10″","12″"]},{"id":"floorTom","label":"Напольный том","original":"16″","choices":["14″","16″"]},{"id":"snare","label":"Малый барабан","original":"14″ × 5,5″","choices":["13″ × 6,5″","14″ × 5″","14″ × 5,5″","14″ × 6,5″"]}],"quantity":1,"unit":"компл.","quantityEditable":false,"group":"Оборудование"},{"id":"check-3","label":"Drum Shield","original":"Drum Shield","requirement":"Drum Shield / Round Shield","choices":["Drum Shield","Round Shield"],"allowRider":false,"allowCustom":false,"allowUnavailable":true,"quantity":1,"unit":"компл.","quantityEditable":false,"group":"Оборудование"},{"id":"check-6","label":"Стойки «журавль»","original":"Журавль","requirement":"2 × микрофонные стойки «журавль»","choices":[],"allowRider":false,"allowCustom":false,"allowUnavailable":false,"standType":"«Журавль»","quantity":2,"unit":"шт","quantityEditable":true,"group":"Оборудование"},{"id":"check-7","label":"Прямые стойки","original":"Прямая","requirement":"2 × прямые микрофонные стойки","choices":[],"allowRider":false,"allowCustom":false,"allowUnavailable":false,"standType":"Прямые","quantity":2,"unit":"шт","quantityEditable":true,"group":"Оборудование"},{"id":"check-9","label":"IEM","original":"G3+","requirement":"4 IEM PSM800+ / G3+","choices":["PSM800+","G3+"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":4,"unit":"компл.","quantityEditable":true,"group":"Оборудование"},{"id":"check-10","label":"Напольные мониторы","original":"15″","requirement":"2 × напольных монитора 15″ в случае большой сцены","choices":["12″","15″"],"allowRider":false,"allowCustom":true,"allowUnavailable":true,"quantity":2,"unit":"шт","quantityEditable":true,"group":"Оборудование"},{"id":"check-11","label":"Пульт барабанщика","original":"Behringer","requirement":"Аналоговый пульт для барабанщика","choices":["Behringer","Yamaha","Mackie","Allen & Heath"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"компл.","quantityEditable":false,"group":"Оборудование"},{"id":"check-13","label":"Клавишная стойка","original":"Двухъярусная","requirement":"Двухъярусная клавишная стойка","choices":["Двухъярусная"],"allowRider":false,"allowCustom":true,"allowUnavailable":true,"quantity":1,"unit":"компл.","quantityEditable":true,"group":"Оборудование"},{"id":"check-15","label":"Кабели RJ45","original":"20 м","requirement":"2 кабеля RJ45 по 20 метров","choices":["20 м","50 м","70 м"],"allowRider":false,"allowCustom":true,"allowUnavailable":true,"quantity":2,"unit":"шт","quantityEditable":true,"group":"Оборудование"},{"id":"video","label":"Вывод видео на экран","original":"HDMI","requirement":"Если на площадке присутствует экран, нам понадобится HDMI кабель к барабанщику или NDI кабель RJ45 с сетевым адаптером на USB-C для вывода собственного видеоконтента.","choices":["HDMI","NDI (RJ45) + сетевой адаптер USB-C"],"allowRider":false,"allowCustom":false,"allowUnavailable":true,"unavailableLabel":"Без экрана","quantity":1,"unit":"линия","quantityEditable":false,"group":"Оборудование"},{"id":"in-1","label":"Kick In","original":"B91A","requirement":"Kick In · B91A","choices":["B91A"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-2","label":"Kick Out","original":"B52","requirement":"Kick Out · M82 / D6 / B52 / MONDO","choices":["M82","D6","B52"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-3","label":"Snare Top","original":"SM57","requirement":"Snare Top · SM57 / B57 / B98 / C451 / E604 / B56","choices":["SM57","B57","B98","C451","E604","B56"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-4","label":"Snare Bottom","original":"SM57","requirement":"Snare Bottom · SM57 / B57 / B98 / C451 / E604 / B56","choices":["SM57","B57","B98","C451","E604","B56"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-5","label":"Rack Tom 10″","original":"E604","requirement":"Rack Tom 10″ · B98 / E604 / B56","choices":["B98","E604","B56"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-6","label":"Rack Tom 12″","original":"E604","requirement":"Rack Tom 12″ · B98 / E604 / B56","choices":["B98","E604","B56"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-7","label":"Floor Tom 16″","original":"D112","requirement":"Floor Tom 16″ · M82 / D6 / D112 / B52 / B98 / E604 / B56","choices":["M82","D6","D112","B52","B98","E604","B56"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-8","label":"Hi-Hat","original":"SM81","requirement":"Hi-Hat · SM81 / 4C51 / E914 / E614","choices":["SM81","4C51","E914","E614"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-9","label":"Overhead","original":"SM81","requirement":"Overhead · SM81 / C414 / 4C51 / E914 / E614","choices":["SM81","C414","4C51","E914","E614"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":2,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-12","label":"Backing Vocal","original":"SM58","requirement":"Backing Vocal · SM58","choices":["SM58","SE V7"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-13","label":"Lead Vocal 1","original":"QLXD (B58)","requirement":"Lead Vocal 1 · AD / ULXD / QLXD (B58 / KSM8)","choices":["AD (B58)","AD (KSM8)","ULXD (B58)","ULXD (KSM8)","QLXD (B58)","QLXD (KSM8)"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"},{"id":"in-14","label":"Lead Vocal 2","original":"QLXD (B58)","requirement":"Lead Vocal 2 · AD / ULXD / QLXD (B58 / KSM8) · через TC Helicon","choices":["AD (B58)","AD (KSM8)","ULXD (B58)","ULXD (KSM8)","QLXD (B58)","QLXD (KSM8)"],"allowRider":false,"allowCustom":true,"allowUnavailable":false,"quantity":1,"unit":"канал","quantityEditable":false,"group":"Микрофоны"}],"items":[{"id":"check-1","title":"StageBox Midas DL32/251","group":"CHECK LIST","quantity":1,"unit":"компл.","required":true,"comment":"","offer":{"label":"Stage Box","original":"DL32","freeText":false}},{"id":"pa","title":"PA. Подбор системы под вместимость и акустику площадки.","group":"CHECK LIST","quantity":1,"unit":"система","required":true,"comment":"","offer":{"label":"PA","original":"","freeText":true}},{"id":"check-2","title":"Барабанная установка: Yamaha Stage Custom / Tama Starclassic, 3 тома — 10″ / 12″ / 16″, малый барабан 14″, винтовой стул.","group":"CHECK LIST","quantity":1,"unit":"компл.","required":true,"comment":"","offer":{"label":"Барабанная установка","original":"Tama Starclassic · бочка 22″, томы 10″ / 12″ / 16″, малый 14″ × 5,5″","freeText":false}},{"id":"check-3","title":"Drum Shield / Round Shield","group":"CHECK LIST","quantity":1,"unit":"компл.","required":true,"comment":"","offer":{"label":"Drum Shield","original":"Drum Shield","freeText":false}},{"id":"check-6","title":"2 × микрофонные стойки «журавль»","group":"CHECK LIST","quantity":2,"unit":"шт","required":true,"comment":"","offer":{"label":"Стойки «журавль»","original":"Журавль","standType":"«Журавль»","freeText":false}},{"id":"check-7","title":"2 × прямые микрофонные стойки","group":"CHECK LIST","quantity":2,"unit":"шт","required":true,"comment":"","offer":{"label":"Прямые стойки","original":"Прямая","standType":"Прямые","freeText":false}},{"id":"check-9","title":"4 IEM PSM800+ / G3+","group":"CHECK LIST","quantity":4,"unit":"компл.","required":true,"comment":"","offer":{"label":"IEM","original":"G3+","freeText":false}},{"id":"check-10","title":"2 × напольных монитора 15″ в случае большой сцены","group":"CHECK LIST","quantity":2,"unit":"шт","required":true,"comment":"","offer":{"label":"Напольные мониторы","original":"15″","freeText":false}},{"id":"check-11","title":"Аналоговый пульт для барабанщика","group":"CHECK LIST","quantity":1,"unit":"компл.","required":true,"comment":"","offer":{"label":"Пульт барабанщика","original":"Behringer","freeText":false}},{"id":"check-13","title":"Двухъярусная клавишная стойка","group":"CHECK LIST","quantity":1,"unit":"компл.","required":true,"comment":"","offer":{"label":"Клавишная стойка","original":"Двухъярусная","freeText":false}},{"id":"check-15","title":"2 кабеля RJ45 по 20 метров","group":"CHECK LIST","quantity":2,"unit":"шт","required":true,"comment":"","offer":{"label":"Кабели RJ45","original":"20 м","freeText":false}},{"id":"video","title":"Если на площадке присутствует экран, нам понадобится HDMI кабель к барабанщику или NDI кабель RJ45 с сетевым адаптером на USB-C для вывода собственного видеоконтента.","group":"Видео","quantity":1,"unit":"линия","required":true,"comment":"Если на площадке есть экран","offer":{"label":"Вывод видео на экран","original":"HDMI","unavailableLabel":"Без экрана","freeText":false}},{"id":"in-1","group":"INPUT","title":"Kick In · B91A","quantity":1,"unit":"канал","required":true,"comment":"Каналы 01","offer":{"label":"Kick In","original":"B91A","freeText":false}},{"id":"in-2","group":"INPUT","title":"Kick Out · M82 / D6 / B52 / MONDO","quantity":1,"unit":"канал","required":true,"comment":"Каналы 02","offer":{"label":"Kick Out","original":"B52","freeText":false}},{"id":"in-3","group":"INPUT","title":"Snare Top · SM57 / B57 / B98 / C451 / E604 / B56","quantity":1,"unit":"канал","required":true,"comment":"Каналы 03","offer":{"label":"Snare Top","original":"SM57","freeText":false}},{"id":"in-4","group":"INPUT","title":"Snare Bottom · SM57 / B57 / B98 / C451 / E604 / B56","quantity":1,"unit":"канал","required":true,"comment":"Каналы 04","offer":{"label":"Snare Bottom","original":"SM57","freeText":false}},{"id":"in-5","group":"INPUT","title":"Rack Tom 10″ · B98 / E604 / B56","quantity":1,"unit":"канал","required":true,"comment":"Каналы 05","offer":{"label":"Rack Tom 10″","original":"E604","freeText":false}},{"id":"in-6","group":"INPUT","title":"Rack Tom 12″ · B98 / E604 / B56","quantity":1,"unit":"канал","required":true,"comment":"Каналы 06","offer":{"label":"Rack Tom 12″","original":"E604","freeText":false}},{"id":"in-7","group":"INPUT","title":"Floor Tom 16″ · M82 / D6 / D112 / B52 / B98 / E604 / B56","quantity":1,"unit":"канал","required":true,"comment":"Каналы 07","offer":{"label":"Floor Tom 16″","original":"D112","freeText":false}},{"id":"in-8","group":"INPUT","title":"Hi-Hat · SM81 / 4C51 / E914 / E614","quantity":1,"unit":"канал","required":true,"comment":"Каналы 08","offer":{"label":"Hi-Hat","original":"SM81","freeText":false}},{"id":"in-9","group":"INPUT","title":"Overhead · SM81 / C414 / 4C51 / E914 / E614","quantity":2,"unit":"канал","required":true,"comment":"Каналы 09 / 10","offer":{"label":"Overhead","original":"SM81","freeText":false}},{"id":"in-12","group":"INPUT","title":"Backing Vocal · SM58","quantity":1,"unit":"канал","required":true,"comment":"Каналы 14","offer":{"label":"Backing Vocal","original":"SM58","freeText":false}},{"id":"in-13","group":"INPUT","title":"Lead Vocal 1 · AD / ULXD / QLXD (B58 / KSM8)","quantity":1,"unit":"канал","required":true,"comment":"Каналы 15","offer":{"label":"Lead Vocal 1","original":"QLXD (B58)","freeText":false}},{"id":"in-14","group":"INPUT","title":"Lead Vocal 2 · AD / ULXD / QLXD (B58 / KSM8) · через TC Helicon","quantity":1,"unit":"канал","required":true,"comment":"Каналы 16","offer":{"label":"Lead Vocal 2","original":"QLXD (B58)","freeText":false}}]},require('./offer-selection.cjs').prepareOffer,
-   require('./offer-message.cjs').offerTelegramMessage,'https://t.me/andrew_monn');
+   require('./offer-message.cjs').offerTelegramMessage,require('./offer-message.cjs').singleOfferMessage,'https://t.me/andrew_monn');
  })();
  </script></body>
 </html>
