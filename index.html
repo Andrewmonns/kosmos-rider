@@ -3,7 +3,7 @@
 <head><script>if(/(?:^|[?&])offer=1(?:&|$)/.test(location.search))document.documentElement.setAttribute('data-public-offer','');</script>
  <style>html[data-public-offer] body{visibility:hidden}</style>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.17"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
+<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.18"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
 <title>KOSMOS: технический райдер</title>
 <style>
 :root{--color-ivory:#e7d9ba;--color-bodyEdge:#514536;--color-pickguard:#27211d;--color-maple:#bf9c63;--color-fretboard:#48372b;--color-deviceMetal:#62666a;--color-screen:#182d34;--color-screenBlue:#598898;--color-screenGreen:#6c9b87;--color-screenCopper:#b48a57;--color-screenViolet:#777a9b;--color-rubber:#303638;--color-displayBlack:#1a181c;--color-ledRed:#b83539;--color-diGreen:#446d57;--wire-usb:#e6ac80;--wire-audio:#8ebfa5;--wire-video:#d2bd88;color-scheme:light;--paper:#f5f1e9;--paper2:#eee8de;--paper3:#e4dbcf;--ink:#282521;--ink2:#49433d;--muted:#695f55;--line:#d3c8b9;--accent:#9b4c2f;--accent-deep:#793820;--accentwash:#efdfd0;--onaccent:#fff9f0;--audio:#3f6f5c;--audio-wash:#e4ebe2;--stage:#ded8ce;--shadow:0 2px 4px rgba(40,37,33,.08);--clear:transparent;--font:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--mono:ui-monospace,'SFMono-Regular',Consolas,monospace;--gap:32px;--radius:8px;--ease:cubic-bezier(.16,1,.3,1);--usb-hex:#a45c38;--audio-hex:#3f6f5c;--stage-text:#40382f;--canvas-paper:#f3eadc;--frame:#d3c8b9;--video-hex:#886a38;--video-wash:#eee6d7;--print-line:#a69b8a;--print-paper:#f4efe7;--print-white:#ffffff;--color-floor:#494742;--color-edge:#282724;--color-metal:#c2c6c7;--color-dark:#3b3c3b;--color-black:#15191a;--color-skin:#e1ddce;--color-red:#704735;--color-gold:#b69a61;--color-green:#a17954;--color-white:#e8e2d3;--color-wood:#925c35;--color-blue:#566d79;--color-glass:#9ea8a2;--color-grid:#52504a;--color-shadow1:#393832;--color-shadow2:#30302c;overflow-x:hidden;overflow-x:clip}
@@ -830,7 +830,7 @@ function point(p){if(!plain(p)||!['x','y'].every(k=>typeof p[k]==='number'&&Numb
 const validId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,60}$/.test(x)&&!['__proto__','constructor','prototype'].includes(x);
 function validateEvent(e){
  if(!plain(e))fail('Нужно мероприятие','event');
- for(const key of ['title','venue','address'])string(e[key],key==='address'?500:160,key,key!=='address');
+ for(const key of ['title','venue','address'])string(e[key],key==='address'?500:160,key,key==='title'||(key==='venue'&&e.flow!=='offer'));
  const dateOptional=e.flow==='offer'&&e.date==='';
  if(!dateOptional&&(!/^\d{4}-\d{2}-\d{2}$/.test(e.date)||Number.isNaN(Date.parse(e.date))||new Date(e.date).toISOString().slice(0,10)!==e.date))fail('Укажите действительную дату','date');
  try{new Intl.DateTimeFormat('ru',{timeZone:e.timezone});}catch{fail('Неизвестный часовой пояс','timezone');}
@@ -885,7 +885,8 @@ function drumKitText(field,model,requested={}){
 }
 
 function prepareOffer(catalog,p){
- const event={title:'KOSMOS',date:p.date??'',venue:p.venue,address:'',timezone:'Europe/Samara',deadline:'',flow:'offer'};validateEvent(event);
+ const event={title:'KOSMOS',date:p.date??'',venue:p.venue??'',address:'',timezone:'Europe/Samara',deadline:'',flow:'offer'};validateEvent(event);
+ event.venue=event.venue.trim();
  if(!p.overrides||typeof p.overrides!=='object'||Array.isArray(p.overrides))throw new Problem(422,'Некорректные строки предложения');
  for(const key of Object.keys(p.overrides))if(!catalog.fields.some(i=>i.id===key))throw new Problem(422,'Неизвестный пункт предложения');
  const body=emptyDraft();
@@ -898,8 +899,10 @@ function prepareOffer(catalog,p){
   if(selection&&field.standType)throw new Problem(422,'Укажите только количество стоек',item.id);
   if(raw&&!field.quantityEditable)throw new Problem(422,'У этой позиции фиксированное количество',item.id);
   if(field.freeText){
-   if(!selection||selection.length>400)throw new Problem(422,'Укажите марки, модели и количество колонок PA',item.id);
-   body.answers[item.id]={status:'confirm',model:field.label+' · '+selection};
+   if(selection.length>400)throw new Problem(422,'Описание PA должно быть не длиннее 400 символов',item.id);
+   body.answers[item.id]=selection
+    ? {status:'confirm',model:field.label+' · '+selection}
+    : {status:'clarify',explanation:'Уточняется'};
    continue;
   }
   const quantity=raw?Number(raw):item.quantity;
@@ -987,7 +990,7 @@ function offerText(proposal,compact=false){
  for(const [model,channels] of micGroups)mics.push(channels.join(', ')+' · '+model);
  if(stands.length)equipment.splice(standIndex,0,['Стойки',...stands].join(separator));
  const event=rider.event;
- const sections=[[event.title+' · OFFER',[event.date&&event.date.split('-').reverse().join('.'),event.venue].filter(Boolean).join(' · ')]];
+ const sections=[[event.title+' · OFFER',[event.date&&event.date.split('-').reverse().join('.'),event.venue||'Площадка уточняется'].filter(Boolean).join(' · ')]];
  if(equipment.length)sections.push(compact?equipment:[divider,...equipment]);
  if(mics.length)sections.push(compact?mics:[divider,...mics]);
  return sections.map(lines=>lines.join('\n')).join('\n\n');
@@ -1061,15 +1064,15 @@ function createForm(template,onEdit){
   var quantity=select('',quantities,edit(function(v){selection.quantity=v;}),{id:'qty-'+item.id,'aria-label':'Количество: '+item.label});
   return field(label,quantity);
  }
- form.append(el('div',{class:'grid offer-event'},field('Дата (необязательно)',input('',edit(function(v){values.date=v;}),{type:'date',id:'field-date'})),field('Площадка',input('',edit(function(v){values.venue=v;}),{required:'',maxlength:160,id:'field-venue',placeholder:'Название площадки'}))));
+ form.append(el('div',{class:'grid offer-event'},field('Дата (необязательно)',input('',edit(function(v){values.date=v;}),{type:'date',id:'field-date'})),field('Площадка (необязательно)',input('',edit(function(v){values.venue=v;}),{maxlength:160,id:'field-venue',placeholder:'Название площадки'}))));
  ['Оборудование','Микрофоны'].forEach(function(group){var section=el('section',{class:'offer-section'},el('h2',{text:group})),standsRow;template.fields.filter(function(f){return f.group===group;}).forEach(function(item){
   var o=values.overrides[item.id]={text:''};
   if(item.freeText){
    var system=input('',edit(function(v){o.text=v;}),{
-    id:'field-'+item.id,required:'',maxlength:400,pattern:'.*\\S.*',
+    id:'field-'+item.id,maxlength:400,
     placeholder:item.freeText,title:item.requirement
    });
-   section.append(el('div',{class:'offer-choice-row offer-choice-row-model'},field(item.label,system)));
+   section.append(el('div',{class:'offer-choice-row offer-choice-row-model'},field(item.label+' (необязательно)',system)));
    return;
   }
   if(item.standType){
