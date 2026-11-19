@@ -967,7 +967,6 @@ function footprint(x,z,r){const floor=C.floor,shade=rgba(token('--color-shadow2'
 box(-3.88,.0215,-1.52,3.32,.006,3.32,rgba('#47484a'));
 box(-3.88,.0275,-1.52,3.28,.002,3.28,rgba('#565759'));
 footprint(-3.8,1.25,.6);footprint(3.6,1.25,.6);footprint(-1.35,1.25,.45);footprint(.95,1.25,.45);
-const groundVertexCount=solid.length;
 // Drum kit: two high crashes, lower ride and hi-hat, following the user's layout reference.
 const drumStart=solid.length;
 const dx=-3.8,dz=-.6;
@@ -1595,6 +1594,9 @@ function smoothCable(points){let out=[points[0]];for(let i=1;i<points.length-1;i
 for(const r of SIGNAL_ROUTES)if(r.kind!=='radio'){r.points=smoothCable(r.points);cable(r.points,.009,r.kind==='network'?C.dark:C.black);}
 
 
+const solidCount=solid.length/10, screenCount=screenMesh.length/10;
+const glassStart=solidCount+screenCount, grilleStart=glassStart+glass.length/10;
+const grilleCount=grilleMesh.length/10;
 let uniform,imagePass,eyePosition; if(gl){const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);const vertices=new Float32Array(solid.length+screenMesh.length+glass.length+grilleMesh.length);
 let offset=0;for(const mesh of [solid,screenMesh,glass,grilleMesh]){vertices.set(mesh,offset);offset+=mesh.length;}
 gl.bufferData(gl.ARRAY_BUFFER,vertices,gl.STATIC_DRAW);
@@ -1667,8 +1669,22 @@ if(!gl)for(const panel of photoPanels){
  panel.uv=p=>{const d=sub(p,origin);return [panel.uvLeft+dot(d,uAxis),1-panel.uvBottom-dot(d,vAxis)];};
  for(let k=panel.offset;k<panel.end;k+=30)if(solid[k+9]>3.5)panelUVs.set(k,panel);
 }
-const softwareFaces=[]; const light=norm([-.4,1,.7]),rim=norm([.6,.4,-.7]);
-if(!gl){for(const data of [solid,screenMesh,grilleMesh,glass]){for(let i=0;i<data.length;i+=30){const p=[data.slice(i,i+3),data.slice(i+10,i+13),data.slice(i+20,i+23)],n=data.slice(i+3,i+6),l=.48+.45*Math.max(0,dot(n,light))+.16*Math.max(0,dot(n,rim));softwareFaces.push({panel:data===solid?panelUVs.get(i):null,texture:data===screenMesh,ground:data===solid&&i<groundVertexCount,p,n,center:mul(add(add(p[0],p[1]),p[2]),1/3),rgb:data.slice(i+6,i+9).map(v=>Math.round(Math.min(1,v*l)*255)),fill:'rgba('+data.slice(i+6,i+9).map(v=>Math.round(Math.min(1,v*l)*255)).join(',')+','+data[i+9]+')',alpha:Math.min(1,data[i+9])});}}}
+const opaqueFaces=[],translucentFaces=[];
+if(!gl){
+ const light=norm([-.4,1,.7]),rim=norm([.6,.4,-.7]);
+ for(const data of [solid,screenMesh,grilleMesh,glass]){
+  for(let i=0;i<data.length;i+=30){
+   const p=[data.slice(i,i+3),data.slice(i+10,i+13),data.slice(i+20,i+23)];
+   const n=data.slice(i+3,i+6);
+   const level=.48+.45*Math.max(0,dot(n,light))+.16*Math.max(0,dot(n,rim));
+   const rgb=data.slice(i+6,i+9).map(v=>Math.round(Math.min(1,v*level)*255));
+   const alpha=Math.min(1,data[i+9]);
+   const faces=alpha===1?opaqueFaces:translucentFaces;
+   faces.push({panel:data===solid?panelUVs.get(i):null,texture:data===screenMesh,p,n,
+    center:mul(add(add(p[0],p[1]),p[2]),1/3),rgb,alpha});
+  }
+ }
+}
 function mm(a,b){const o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)for(let k=0;k<4;k++)o[c*4+r]+=a[k*4+r]*b[c*4+k];return o}
 function perspective(fov,aspect,near,far){const f=1/Math.tan(fov/2);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,2*far*near/(near-far),0])}
 function lookAt(eye,center){const z=norm(sub(eye,center)),x=norm(cross([0,1,0],z)),y=cross(z,x);return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1])}
@@ -1698,8 +1714,8 @@ function renderSoftware(eye){const rw=canvas.width,rh=canvas.height,sx=rw/width,
  const ux=(b[1]-c[1])/den,uy=(c[0]-b[0])/den,vx=(c[1]-a[1])/den,vy=(a[0]-c[0])/den;
  for(let y=minY;y<=maxY;y++){let u=ux*(minX+.5-c[0])+uy*(y+.5-c[1]),vv=vx*(minX+.5-c[0])+vy*(y+.5-c[1]),pos=y*rw+minX;for(let x=minX;x<=maxX;x++,pos++,u+=ux,vv+=vx){const w=1-u-vv;if(u<-.00001||vv<-.00001||w<-.00001)continue;const depth=u*a[2]+vv*b[2]+w*c[2];if(depth+1e-7<rasterDepth[pos])continue;const k=pos*4;if(translucent){const alpha=f.alpha;pixels[k]=f.rgb[0]*alpha+pixels[k]*(1-alpha);pixels[k+1]=f.rgb[1]*alpha+pixels[k+1]*(1-alpha);pixels[k+2]=f.rgb[2]*alpha+pixels[k+2]*(1-alpha);pixels[k+3]=Math.max(pixels[k+3],alpha*255);}else{rasterDepth[pos]=depth;if(uv&&texels){const tu=(u*a[2]*uv[0][0]+vv*b[2]*uv[1][0]+w*c[2]*uv[2][0])/depth,tv=(u*a[2]*uv[0][1]+vv*b[2]*uv[1][1]+w*c[2]*uv[2][1])/depth;const tx=Math.max(0,Math.min(tw-1,Math.floor(tu*tw))),ty=Math.max(0,Math.min(th-1,Math.floor(tv*th))),tk=(ty*tw+tx)*4;pixels[k]=texels[tk];pixels[k+1]=texels[tk+1];pixels[k+2]=texels[tk+2];}else{pixels[k]=f.rgb[0];pixels[k+1]=f.rgb[1];pixels[k+2]=f.rgb[2];}pixels[k+3]=255;}}}
  }
- for(const f of softwareFaces)if(f.alpha===1)rasterFace(f,false);
- for(const f of softwareFaces.filter(f=>f.alpha<1).sort((a,b)=>project(b.center)[2]-project(a.center)[2])){
+ for(const f of opaqueFaces)rasterFace(f,false);
+ for(const f of translucentFaces.slice().sort((a,b)=>project(b.center)[2]-project(a.center)[2])){
   const grazing=1-Math.min(1,Math.abs(dot(f.n,norm(sub(eye,f.center)))));
   rasterFace({...f,alpha:.10+.24*grazing*grazing*grazing,rgb:[173,202,207]},true);
  }
@@ -1708,13 +1724,12 @@ function renderSoftware(eye){const rw=canvas.width,rh=canvas.height,sx=rw/width,
 
 // Keep the full-resolution still image. During a touch gesture reduce only the drawing buffer.
 let touchInteraction=false;
-function render(){raf=0;width=viewer.clientWidth;height=viewer.clientHeight;if(!width||!height||document.hidden)return;const dpr=gl?Math.min(window.devicePixelRatio||1,touchInteraction?1.25:3,Math.sqrt((touchInteraction?400000:2000000)/(width*height))):Math.min(1,Math.sqrt((touchInteraction?120000:240000)/(width*height)));if(canvas.width!==Math.max(1,Math.floor(width*dpr))||canvas.height!==Math.max(1,Math.floor(height*dpr))){canvas.width=Math.max(1,Math.floor(width*dpr));canvas.height=Math.max(1,Math.floor(height*dpr))}if(gl)gl.viewport(0,0,canvas.width,canvas.height);const {aspect,center,eye}=cameraState();cameraEye=eye;matrix=mm(perspective(.6,aspect,.1,150),lookAt(eye,center));if(gl){gl.uniform3fv(eyePosition,eye);gl.uniformMatrix4fv(uniform,false,matrix);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.depthMask(true);gl.uniform1f(imagePass,0);gl.drawArrays(gl.TRIANGLES,0,solid.length/10);if(screenImageReady){gl.uniform1f(imagePass,1);gl.drawArrays(gl.TRIANGLES,solid.length/10,screenMesh.length/10);gl.uniform1f(imagePass,0);}gl.uniform1f(imagePass,3);
- gl.drawArrays(gl.TRIANGLES,(solid.length+screenMesh.length+glass.length)/10,grilleMesh.length/10);
+function render(){raf=0;width=viewer.clientWidth;height=viewer.clientHeight;if(!width||!height||document.hidden)return;const dpr=gl?Math.min(window.devicePixelRatio||1,touchInteraction?1.25:3,Math.sqrt((touchInteraction?400000:2000000)/(width*height))):Math.min(1,Math.sqrt((touchInteraction?120000:240000)/(width*height)));if(canvas.width!==Math.max(1,Math.floor(width*dpr))||canvas.height!==Math.max(1,Math.floor(height*dpr))){canvas.width=Math.max(1,Math.floor(width*dpr));canvas.height=Math.max(1,Math.floor(height*dpr))}if(gl)gl.viewport(0,0,canvas.width,canvas.height);const {aspect,center,eye}=cameraState();cameraEye=eye;matrix=mm(perspective(.6,aspect,.1,150),lookAt(eye,center));if(gl){gl.uniform3fv(eyePosition,eye);gl.uniformMatrix4fv(uniform,false,matrix);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.depthMask(true);gl.uniform1f(imagePass,0);gl.drawArrays(gl.TRIANGLES,0,solidCount);if(screenImageReady){gl.uniform1f(imagePass,1);gl.drawArrays(gl.TRIANGLES,solidCount,screenCount);gl.uniform1f(imagePass,0);}gl.uniform1f(imagePass,3);
+ gl.drawArrays(gl.TRIANGLES,grilleStart,grilleCount);
  gl.uniform1f(imagePass,2);
  gl.depthMask(false);
- const start=(solid.length+screenMesh.length)/10;
  const panes=glassPanelCenters.map((center,index)=>({index,depth:project(center)[2]})).sort((a,b)=>b.depth-a.depth);
- for(const pane of panes)gl.drawArrays(gl.TRIANGLES,start+6*pane.index,6);
+ for(const pane of panes)gl.drawArrays(gl.TRIANGLES,glassStart+6*pane.index,6);
  gl.depthMask(true);}else{renderSoftware(eye);}
 
 for(const p of powerElements){const [x,y,w]=project(p.point),visible=w>0&&x>18&&x<width-18&&y>12&&y<height-8;p.el.style.display=visible?'block':'none';p.el.style.left=x+'px';p.el.style.top=y+'px';}
@@ -1728,10 +1743,24 @@ $('#view3d').addEventListener('click',()=>setMode());$('#reset').addEventListene
 function rayAt(x,y){const state=cameraState(),back=norm(sub(state.eye,state.center)),right=norm(cross([0,1,0],back)),up=cross(back,right),t=Math.tan(.3);return{origin:state.eye,dir:norm(add(add(mul(right,(x/width*2-1)*t*state.aspect),mul(up,(1-y/height*2)*t)),mul(back,-1))),right,up,state};}
 // Vertices for adjacent pieces are emitted together. Bound each batch once so
 // picking can skip distant hardware and still return the exact triangle hit.
+// Picking uses only the origin and two edges of each triangle, in world coordinates.
+const triangleStride=9;
+const pickTriangles=new Float64Array(solidCount/3*triangleStride);
 const pickBatches=[];
+let write=0;
 for(let start=0;start<solid.length;start+=64*30){
  const end=Math.min(start+64*30,solid.length);
  let xmin=Infinity,ymin=Infinity,zmin=Infinity,xmax=-Infinity,ymax=-Infinity,zmax=-Infinity;
+ const first=write;
+ for(let i=start;i<end;i+=30){
+  for(let axis=0;axis<3;axis++){
+   const origin=solid[i+axis];
+   pickTriangles[write+axis]=origin;
+   pickTriangles[write+3+axis]=solid[i+10+axis]-origin;
+   pickTriangles[write+6+axis]=solid[i+20+axis]-origin;
+  }
+  write+=triangleStride;
+ }
  for(let i=start;i<end;i+=10){
   const x=solid[i],y=solid[i+1],z=solid[i+2];
   xmin=Math.min(xmin,x);xmax=Math.max(xmax,x);
@@ -1739,28 +1768,36 @@ for(let start=0;start<solid.length;start+=64*30){
   zmin=Math.min(zmin,z);zmax=Math.max(zmax,z);
  }
  const x=(xmin+xmax)/2,y=(ymin+ymax)/2,z=(zmin+zmax)/2;
- pickBatches.push({start,end,x,y,z,radiusSquared:(xmax-x)**2+(ymax-y)**2+(zmax-z)**2+1e-8});
+ pickBatches.push({start:first,end:write,x,y,z,radiusSquared:(xmax-x)**2+(ymax-y)**2+(zmax-z)**2+1e-8});
 }
+// Both renderers have consumed the build arrays; draw calls use the saved offsets above.
+solid.length=0;screenMesh.length=0;glass.length=0;grilleMesh.length=0;
 function pointAt(x,y){
- const ray=rayAt(x,y);let nearest=Infinity,point=null;
+ const ray=rayAt(x,y),[rx,ry,rz]=ray.dir;
+ let nearest=Infinity;
  for(const batch of pickBatches){
   const dx=batch.x-ray.origin[0],dy=batch.y-ray.origin[1],dz=batch.z-ray.origin[2];
   const along=Math.max(0,dx*ray.dir[0]+dy*ray.dir[1]+dz*ray.dir[2]);
   const ox=dx-along*ray.dir[0],oy=dy-along*ray.dir[1],oz=dz-along*ray.dir[2];
   if(ox*ox+oy*oy+oz*oz>batch.radiusSquared)continue;
-  for(let i=batch.start;i<batch.end;i+=30){
-   const a=solid.slice(i,i+3),b=solid.slice(i+10,i+13),c=solid.slice(i+20,i+23);
-   const edge1=sub(b,a),edge2=sub(c,a),p=cross(ray.dir,edge2),det=dot(edge1,p);
+  for(let i=batch.start;i<batch.end;i+=triangleStride){
+   const edge1x=pickTriangles[i+3],edge1y=pickTriangles[i+4],edge1z=pickTriangles[i+5];
+   const edge2x=pickTriangles[i+6],edge2y=pickTriangles[i+7],edge2z=pickTriangles[i+8];
+   const px=ry*edge2z-rz*edge2y,py=rz*edge2x-rx*edge2z,pz=rx*edge2y-ry*edge2x;
+   const det=edge1x*px+edge1y*py+edge1z*pz;
    if(Math.abs(det)<1e-8)continue;
-   const inv=1/det,offset=sub(ray.origin,a),u=dot(offset,p)*inv;
+   const ox=ray.origin[0]-pickTriangles[i],oy=ray.origin[1]-pickTriangles[i+1],oz=ray.origin[2]-pickTriangles[i+2];
+   const inv=1/det,u=(ox*px+oy*py+oz*pz)*inv;
    if(u<0||u>1)continue;
-   const q=cross(offset,edge1),v=dot(ray.dir,q)*inv;
+   const qx=oy*edge1z-oz*edge1y,qy=oz*edge1x-ox*edge1z,qz=ox*edge1y-oy*edge1x;
+   const v=(rx*qx+ry*qy+rz*qz)*inv;
    if(v<0||u+v>1)continue;
-   const t=dot(edge2,q)*inv;
-   if(t>.1&&t<nearest){nearest=t;point=add(ray.origin,mul(ray.dir,t));}
+   const t=(edge2x*qx+edge2y*qy+edge2z*qz)*inv;
+   if(t>.1&&t<nearest)nearest=t;
   }
  }
- if(point)return point;const normal=norm(sub(ray.state.center,ray.state.eye)),den=dot(ray.dir,normal),t=dot(sub(ray.state.center,ray.origin),normal)/(Math.abs(den)>1e-7?den:1);return add(ray.origin,mul(ray.dir,t));}
+ if(nearest<Infinity)return add(ray.origin,mul(ray.dir,nearest));
+ const normal=norm(sub(ray.state.center,ray.state.eye)),den=dot(ray.dir,normal),t=dot(sub(ray.state.center,ray.origin),normal)/(Math.abs(den)>1e-7?den:1);return add(ray.origin,mul(ray.dir,t));}
 function localPoint(x,y){const r=canvas.getBoundingClientRect();return[x-r.left,y-r.top];}
 function setZoom(z,x=width/2,y=height/2,anchor){const next=Math.max(.68,Math.min(6,z)),point=anchor||pointAt(x,y),ratio=zoom/next;cameraCenter=add(point,mul(sub(cameraCenter,point),ratio));zoom=next;schedule();}
 canvas.addEventListener('wheel',e=>{e.preventDefault();const p=localPoint(e.clientX,e.clientY);setZoom(zoom*Math.exp(-e.deltaY*.001),p[0],p[1]);},{passive:false});
