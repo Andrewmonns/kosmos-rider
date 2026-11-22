@@ -3,7 +3,7 @@
 <head><script>if(/(?:^|[?&])offer=1(?:&|$)/.test(location.search))document.documentElement.setAttribute('data-public-offer','');</script>
  <style>.offer-loading{display:none}html[data-public-offer] .wrap{display:none}html[data-public-offer] .offer-loading{display:block;padding:24px;color:#f7f3ff;background:#100f20}html[data-public-offer] .offer-loading a{color:#cab7f3}</style>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.19"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
+<meta name="theme-color" content="#100f20"><meta name="kosmos-version" content="4.0.20"><meta name="description" content="Технический райдер кавер-группы KOSMOS: входы, выходы, оборудование и интерактивный 3D-стэйджплан.">
 <title>KOSMOS: технический райдер</title>
 <style>
 :root{--color-ivory:#e7d9ba;--color-bodyEdge:#514536;--color-pickguard:#27211d;--color-maple:#bf9c63;--color-fretboard:#48372b;--color-deviceMetal:#62666a;--color-screen:#182d34;--color-screenBlue:#598898;--color-screenGreen:#6c9b87;--color-screenCopper:#b48a57;--color-screenViolet:#777a9b;--color-rubber:#303638;--color-displayBlack:#1a181c;--color-ledRed:#b83539;--color-diGreen:#446d57;--wire-usb:#e6ac80;--wire-audio:#8ebfa5;--wire-video:#d2bd88;color-scheme:light;--paper:#f5f1e9;--paper2:#eee8de;--paper3:#e4dbcf;--ink:#282521;--ink2:#49433d;--muted:#695f55;--line:#d3c8b9;--accent:#9b4c2f;--accent-deep:#793820;--accentwash:#efdfd0;--onaccent:#fff9f0;--audio:#3f6f5c;--audio-wash:#e4ebe2;--stage:#ded8ce;--shadow:0 2px 4px rgba(40,37,33,.08);--clear:transparent;--font:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--mono:ui-monospace,'SFMono-Regular',Consolas,monospace;--gap:32px;--radius:8px;--ease:cubic-bezier(.16,1,.3,1);--usb-hex:#a45c38;--audio-hex:#3f6f5c;--stage-text:#40382f;--canvas-paper:#f3eadc;--frame:#d3c8b9;--video-hex:#886a38;--video-wash:#eee6d7;--print-line:#a69b8a;--print-paper:#f4efe7;--print-white:#ffffff;--color-floor:#494742;--color-edge:#282724;--color-metal:#c2c6c7;--color-dark:#3b3c3b;--color-black:#15191a;--color-skin:#e1ddce;--color-red:#704735;--color-gold:#b69a61;--color-green:#a17954;--color-white:#e8e2d3;--color-wood:#925c35;--color-blue:#566d79;--color-glass:#9ea8a2;--color-grid:#52504a;--color-shadow1:#393832;--color-shadow2:#30302c;overflow-x:hidden;overflow-x:clip}
@@ -1895,9 +1895,90 @@ function renderSoftware(eye){const rw=canvas.width,rh=canvas.height,sx=rw/width,
  ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(rasterImage,0,0);
 }
 
-// Keep the full-resolution still image. During a touch gesture reduce only the drawing buffer.
-let touchInteraction=false;
-function render(){raf=0;width=viewer.clientWidth;height=viewer.clientHeight;if(!width||!height||document.hidden)return;const dpr=gl?Math.min(window.devicePixelRatio||1,touchInteraction?1.25:3,Math.sqrt((touchInteraction?400000:2000000)/(width*height))):Math.min(1,Math.sqrt((touchInteraction?120000:240000)/(width*height)));if(canvas.width!==Math.max(1,Math.floor(width*dpr))||canvas.height!==Math.max(1,Math.floor(height*dpr))){canvas.width=Math.max(1,Math.floor(width*dpr));canvas.height=Math.max(1,Math.floor(height*dpr))}if(gl)gl.viewport(0,0,canvas.width,canvas.height);const {aspect,center,eye}=cameraState();cameraEye=eye;matrix=mm(perspective(.6,aspect,.1,150),lookAt(eye,center));if(gl){gl.uniform3fv(eyePosition,eye);gl.uniformMatrix4fv(uniform,false,matrix);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.depthMask(true);gl.uniform1f(imagePass,0);gl.drawArrays(gl.TRIANGLES,0,solidCount);if(screenImageReady){gl.uniform1f(imagePass,1);gl.drawArrays(gl.TRIANGLES,solidCount,screenCount);gl.uniform1f(imagePass,0);}gl.uniform1f(imagePass,3);
+// Begin at the still-frame resolution. Lower the drawing buffer only when
+// rendering misses several display refreshes, without changing the camera.
+let touchInteraction = false;
+let touchQualityStep = 0;
+let slowTouchFrames = 0;
+let steadyTouchFrames = 0;
+let touchEpoch = 0;
+let lastTouchEnd = 0;
+let refreshMs = 1000 / 60;
+const touchScales = [1, 0.8, 0.64, 0.5, 0];
+
+function startTouchResolution() {
+  if (touchInteraction) return;
+  if (Date.now() - lastTouchEnd > 8000) {
+    touchQualityStep = 0;
+    steadyTouchFrames = 0;
+  }
+  touchInteraction = true;
+}
+
+function scenePixelRatio() {
+  const area = width * height;
+  const still = gl
+    ? Math.min(window.devicePixelRatio || 1, 3, Math.sqrt(2000000 / area))
+    : Math.min(1, Math.sqrt(240000 / area));
+  if (!touchInteraction || !touchQualityStep) return still;
+  const floor = gl
+    ? Math.min(still, 1.25, Math.sqrt(400000 / area))
+    : Math.min(still, Math.sqrt(120000 / area));
+  return Math.max(floor, still * touchScales[touchQualityStep]);
+}
+
+// A low-power browser may intentionally refresh at 30 Hz. Sample the idle
+// cadence first so this is not mistaken for an overloaded renderer.
+function measureIdleRefresh() {
+  const intervals = [];
+  let previous;
+  function sample(time) {
+    if (document.hidden || touchInteraction || !Number.isFinite(time)) return;
+    if (previous !== undefined) intervals.push(time - previous);
+    previous = time;
+    if (intervals.length < 9) { frame(sample); return; }
+    intervals.sort((a, b) => a - b);
+    refreshMs = Math.max(1000 / 60, Math.min(1000 / 30, intervals[4]));
+  }
+  frame(sample);
+}
+
+function sampleTouchRender(time) {
+  if (!touchInteraction || !Number.isFinite(time)) return;
+  const epoch = touchEpoch;
+  // Time to the next animation frame, independent of how frequently the
+  // touchscreen sends moves. No polling loop runs while the fingers are still.
+  frame(next => {
+    if (!touchInteraction || epoch !== touchEpoch || !Number.isFinite(next)) return;
+    const elapsed = next - time;
+    if (elapsed > refreshMs * 1.45) {
+      slowTouchFrames++;
+      steadyTouchFrames = 0;
+    } else {
+      slowTouchFrames = Math.max(0, slowTouchFrames - 1);
+      steadyTouchFrames++;
+    }
+    if (slowTouchFrames >= 5 && touchQualityStep < touchScales.length - 1) {
+      touchQualityStep++;
+    } else if (steadyTouchFrames >= 90 && touchQualityStep > 0) {
+      touchQualityStep--;
+    } else {
+      return;
+    }
+    slowTouchFrames = 0;
+    steadyTouchFrames = 0;
+  });
+}
+
+function finishTouchResolution() {
+  if (!touchInteraction) return;
+  touchInteraction = false;
+  touchEpoch++;
+  lastTouchEnd = Date.now();
+  slowTouchFrames = 0;
+  schedule();
+}
+function render(){raf=0;width=viewer.clientWidth;height=viewer.clientHeight;if(!width||!height||document.hidden)return;const dpr=scenePixelRatio();if(canvas.width!==Math.max(1,Math.floor(width*dpr))||canvas.height!==Math.max(1,Math.floor(height*dpr))){canvas.width=Math.max(1,Math.floor(width*dpr));canvas.height=Math.max(1,Math.floor(height*dpr))}if(gl)gl.viewport(0,0,canvas.width,canvas.height);const {aspect,center,eye}=cameraState();cameraEye=eye;matrix=mm(perspective(.6,aspect,.1,150),lookAt(eye,center));if(gl){gl.uniform3fv(eyePosition,eye);gl.uniformMatrix4fv(uniform,false,matrix);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.depthMask(true);gl.uniform1f(imagePass,0);gl.drawArrays(gl.TRIANGLES,0,solidCount);if(screenImageReady){gl.uniform1f(imagePass,1);gl.drawArrays(gl.TRIANGLES,solidCount,screenCount);gl.uniform1f(imagePass,0);}gl.uniform1f(imagePass,3);
  gl.drawArrays(gl.TRIANGLES,grilleStart,grilleCount);
  gl.uniform1f(imagePass,2);
  gl.depthMask(false);
@@ -1908,7 +1989,15 @@ function render(){raf=0;width=viewer.clientWidth;height=viewer.clientHeight;if(!
 for(const p of powerElements){const [x,y,w]=project(p.point),visible=w>0&&x>18&&x<width-18&&y>12&&y<height-8;p.el.style.display=visible?'block':'none';p.el.style.left=x+'px';p.el.style.top=y+'px';}
 canvas.dataset.focus=focusView;canvas.dataset.center=cameraCenter.map(v=>v.toFixed(5)).join(',');canvas.dataset.yaw=yaw.toFixed(3);canvas.dataset.pitch=pitch.toFixed(3);canvas.dataset.zoom=zoom.toFixed(3);return true;}
 let rendered=false;function ready(){if(!rendered){rendered=true;api.ready(gl?'webgl':'canvas');$('#view3d').setAttribute('aria-pressed','true')}}
-function schedule(){if(!raf&&!document.hidden)raf=frame(()=>{try{if(render())ready()}catch(error){api.fail(error)}})}
+function schedule() {
+  if (raf || document.hidden) return;
+  raf = frame(time => {
+    try {
+      flushGesture(false);
+      if (render()) { ready(); sampleTouchRender(time); }
+    } catch (error) { api.fail(error); }
+  });
+}
 window.KOSMOSRefresh=schedule;
 function setMode(){cancelPointers();api.show3D();$('#view3d').setAttribute('aria-pressed','true');yaw=.15;pitch=.60;zoom=1;cameraCenter=cameraViews.all.center.slice();schedule();}
 function focusScene(){setMode();}
@@ -1982,12 +2071,12 @@ function pairState(){const pair=[];pointers.forEach(p=>pair.push(p));if(pair.len
 function anchorAt(point,x,y){const ray=rayAt(x,y),forward=norm(sub(ray.state.center,ray.state.eye)),depth=dot(sub(point,ray.origin),forward),den=dot(ray.dir,forward);if(depth<.1||Math.abs(den)<1e-7)return;const under=add(ray.origin,mul(ray.dir,depth/den));cameraCenter=add(cameraCenter,sub(point,under));}
 function beginGesture(){const pair=pairState();if(!pair){gesture=null;singleAnchor=null;pointers.forEach(p=>{if(!singleAnchor)singleAnchor=pointAt(...localPoint(...p));});return;}const p=localPoint(...pair.mid);gesture={distance:pair.distance,angle:pair.angle,mid:p,anchor:pointAt(...p)};singleAnchor=null;}
 function startPointer(id,x,y,rotate=false){if(pointers.has(id)||pointers.size>=2)return;flushGesture();if(!pointers.size)singleRotate=rotate;pointers.set(id,[x,y]);canvas.classList.add('dragging');beginGesture();}
-function movePointer(id,x,y,isTouch=false){if(!pointers.has(id))return;if(isTouch)touchInteraction=true;const old=pointers.get(id);pointers.set(id,[x,y]);if(pointers.size===1){
+function movePointer(id,x,y,isTouch=false){if(!pointers.has(id))return;if(isTouch)startTouchResolution();const old=pointers.get(id);pointers.set(id,[x,y]);if(pointers.size===1){
  if(singleRotate){yaw-=(x-old[0])*.008;pitch=Math.max(.12,Math.min(Math.PI/2-.001,pitch+(y-old[1])*.006));}
  else if(singleAnchor){const p=localPoint(x,y);anchorAt(singleAnchor,...p);}
  schedule();return;}
- if(!gestureFramePending){gestureFramePending=true;frame(flushGesture);}}
-function flushGesture(){
+ gestureFramePending=true;schedule();}
+function flushGesture(renderAfter=true){
  if(!gestureFramePending)return;gestureFramePending=false;
  const pair=pairState();if(!pair)return;const mid=localPoint(...pair.mid);
  if(!gesture||gesture.distance<1){beginGesture();return;}
@@ -2002,9 +2091,9 @@ function flushGesture(){
  }else{
   zoom=next;anchorAt(gesture.anchor,...mid);
  }
- gesture.mid=mid;gesture.distance=pair.distance;gesture.angle=pair.angle;schedule();
+ gesture.mid=mid;gesture.distance=pair.distance;gesture.angle=pair.angle;if(renderAfter)schedule();
 }
-function finishTouchResolution(){if(touchInteraction){touchInteraction=false;schedule();}}
+
 function endPointer(id){if(!pointers.has(id))return;flushGesture();pointers.delete(id);singleRotate=false;beginGesture();if(!pointers.size){canvas.classList.remove('dragging');finishTouchResolution();}}
 function cancelPointers(){gestureFramePending=false;pointers.clear();gesture=null;singleAnchor=null;singleRotate=false;canvas.classList.remove('dragging');finishTouchResolution();}
 
@@ -2027,6 +2116,7 @@ if(typeof window.ResizeObserver==='function')new window.ResizeObserver(schedule)
 window.addEventListener('resize',schedule);window.addEventListener('orientationchange',schedule);
 document.addEventListener('visibilitychange',()=>{cancelPointers();if(!document.hidden)schedule()});
 canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();cancelPointers();api.fail(Error('WebGL context lost'))});
+if(window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches)measureIdleRefresh();
 if(render())ready();
 };
 </script>
