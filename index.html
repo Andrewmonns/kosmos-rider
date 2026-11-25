@@ -1070,25 +1070,8 @@ void main(){
     float sheen=pow(1.0-abs(dot(view,normalize(surfaceNormal))),2.0);
     gl_FragColor=vec4((col.rgb+vec3(0.07*sheen))*texture2D(grillePattern,uv).rgb,1.0);
   }else if(imagePass>1.5){
-    vec3 view = normalize(eyePosition - surfacePos);
-    vec3 normal = normalize(surfaceNormal);
-    float grazing = 1.0 - min(abs(dot(view, normal)), 1.0);
-    float fresnel = grazing * grazing;
-
-    // A reflected strip light and its softer surround. Height varies the
-    // reflection across a pane, and the view direction moves it as the stage turns.
-    vec3 reflection = reflect(-view, normal);
-    float band = dot(reflection, normalize(vec3(0.36, 0.82, 0.44))) - 0.38
-               + dot(surfacePos - vec3(-3.8, 0.955, -1.6), vec3(0.11, 0.42, -0.07));
-    float wash = 1.0 - smoothstep(0.055, 0.22, abs(band));
-    float glint = 1.0 - smoothstep(0.007, 0.04, abs(band + 0.045));
-    float edgeDistance = min(abs(surfacePos.y - 0.05), abs(1.86 - surfacePos.y));
-    float edge = 1.0 - smoothstep(0.0, 0.024, edgeDistance);
-
-    vec3 tint = mix(vec3(0.52, 0.74, 0.80), vec3(0.97, 0.99, 1.0),
-                    clamp(0.65 * wash + 0.40 * glint + 0.5 * edge, 0.0, 1.0));
-    float opacity = 0.06 + 0.40 * fresnel + 0.24 * wash + 0.27 * glint + 0.24 * edge;
-    gl_FragColor = vec4(tint, min(opacity, 0.70));
+    // The shield uses its translucent material colour at every viewing angle.
+    gl_FragColor = col;
 
   }else if(imagePass>0.5){
     gl_FragColor=texture2D(picture,imageUV);
@@ -1844,7 +1827,7 @@ if(!gl){
    const rgb=data.slice(i+6,i+9).map(v=>Math.round(Math.min(1,v*level)*255));
    const alpha=Math.min(1,data[i+9]);
    const faces=alpha===1?opaqueFaces:translucentFaces;
-   faces.push({glassCenter:data===glass?glassPanelCenters[Math.floor(i/60)]:null,panel:data===solid?panelUVs.get(i):null,texture:data===screenMesh,p,n,
+   faces.push({panel:data===solid?panelUVs.get(i):null,texture:data===screenMesh,p,n,
     center:mul(add(add(p[0],p[1]),p[2]),1/3),rgb,alpha});
   }
  }
@@ -1880,17 +1863,7 @@ function renderSoftware(eye){const rw=canvas.width,rh=canvas.height,sx=rw/width,
  }
  for(const f of opaqueFaces)rasterFace(f,false);
  for(const f of translucentFaces.slice().sort((a,b)=>project(b.center)[2]-project(a.center)[2])){
-  const center = f.glassCenter || f.center;
-  const view = norm(sub(eye, center));
-  const facing = dot(view, f.n);
-  const grazing = 1 - Math.min(1, Math.abs(facing));
-  const reflection = sub(mul(f.n, 2 * facing), view);
-  const offset = dot(sub(center, [-3.8,.955,-1.6]), [.11,.42,-.07]);
-  const band = Math.abs(dot(reflection, norm([.36,.82,.44])) - .38 + offset);
-  const highlight = Math.max(0, 1 - band / .22);
-  const alpha = .06 + .40 * grazing * grazing + .32 * highlight * highlight;
-  const rgb = [133 + 110 * highlight, 189 + 63 * highlight, 204 + 51 * highlight];
-  rasterFace({...f, alpha, rgb}, true);
+  rasterFace(f, true);
  }
  ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(rasterImage,0,0);
 }
